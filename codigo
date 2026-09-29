@@ -1,0 +1,272 @@
+import streamlit as st
+import numpy as np
+import matplotlib.pyplot as plt
+import sympy as sp
+import datetime
+
+# ==========================================
+# CONFIGURACIÓN DE LA INTERFAZ - EQUIPO 4 (GCP)
+# ==========================================
+st.set_page_config(page_title="Simulador Cauchy - Equipo 4 (GCP)", layout="wide")
+
+st.markdown("""
+    <style>
+    .stApp { background-color: #FFFFFF; }
+    h1 { color: #4285F4; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    h2, h3 { color: #DB4437; }
+    .stSidebar { background-color: #F8F9FA; border-right: 2px solid #4285F4; }
+    .stButton>button { background-color: #4285F4; color: white; border-radius: 8px; }
+    
+    /* Tarjeta de métricas matemáticas */
+    .metric-card {
+        background-color: #F8F9FA;
+        border-left: 5px solid #4285F4;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .metric-card-danger {
+        background-color: #FCE8E6;
+        border-left: 5px solid #EA4335;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 15px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("☁️ GCP Iowa Data Center - Analizador de Estabilidad de Señales")
+st.markdown("### Asignatura: Análisis de Señales y Sistemas | Equipo 4 (GCP Iowa)")
+
+# ==========================================
+# BARRA LATERAL - CONFIGURACIÓN DEL SISTEMA
+# ==========================================
+st.sidebar.header("⚙️ Configuración del Servidor GCP")
+
+ID_SERVIDOR = st.sidebar.text_input("ID del Servidor:", "GCP_US_CENTRAL1_IOWA_NODE")
+SEED_EQUIPO = st.sidebar.number_input("Semilla Numérica (Seed):", value=404, disabled=True)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📌 Selección del Caso")
+caso = st.sidebar.selectbox(
+    "Selecciona el Caso de Estudio Obligatorio:",
+    [
+        "Caso 1: Canal con Eco (Dominio Z)",
+        "Caso 2: Filtro IoT Complejo (Dominio S)",
+        "Caso 3: Servidor Inestable - Polo Múltiple (Dominio S)"
+    ]
+)
+
+# Ajuste automático del centro para el Caso 2
+centro_y_default = 3.0 if "Caso 2" in caso else 0.0
+radio_default = 1.0 if "Caso 2" in caso else (0.6 if "Caso 1" in caso else 1.5)
+
+st.sidebar.subheader("🎯 Contorno de Cauchy (γ)")
+radio_contorno = st.sidebar.slider("Radio del Contorno (R):", 0.1, 4.0, radio_default, 0.05)
+centro_x = st.sidebar.slider("Centro Real (Re):", -3.0, 3.0, -2.0 if "Caso 2" in caso else 0.0, 0.1)
+centro_y = st.sidebar.slider("Centro Imaginario (Im):", -3.0, 3.0, centro_y_default, 0.1)
+
+np.random.seed(SEED_EQUIPO)
+
+# ==========================================
+# DEFINICIÓN DE CASOS DE ESTUDIO Y MATEMÁTICA
+# ==========================================
+if "Caso 1" in caso:
+    st.subheader("Caso 1: Canal con Eco e Interferencia por Multitrayectoria (Dominio Z)")
+    polos = [complex(0.5, 0), complex(0.85, 0)]
+    tipo_dominio = "Z"
+    
+elif "Caso 2" in caso:
+    st.subheader("Caso 2: Filtro de Resonancia Crítica en IoT (Dominio S)")
+    polos = [complex(-2, 3), complex(-2, -3)]
+    tipo_dominio = "S"
+    
+else:
+    st.subheader("Caso 3: Caída del Servidor por Desbordamiento Matemático (Dominio S - Polo Múltiple)")
+    polos = [complex(1, 0), complex(1, 0), complex(-3, 0)]
+    tipo_dominio = "S"
+
+# ==========================================
+# MOTOR MATEMÁTICO: CÁLCULO DE RESIDUOS Y CAUCHY
+# ==========================================
+def calcular_residuos_y_cauchy(polos, radio_curva, cx_val, cy_val, caso_seleccionado):
+    residuos_atrapados = []
+    integral_cauchy = complex(0, 0)
+    s, z = sp.symbols('s z')
+
+    if "Caso 1" in caso_seleccionado:
+        var_compleja = z
+        H = (z**2) / ((z - 0.5) * (z - 0.85))
+    elif "Caso 2" in caso_seleccionado:
+        var_compleja = s
+        H = (s + 2) / (s**2 + 4*s + 13)
+    else:
+        var_compleja = s
+        H = 1 / (((s - 1)**2) * (s + 3))
+
+    polos_unicos = set(polos)
+    centro_complejo = complex(cx_val, cy_val)
+
+    for p in polos_unicos:
+        if np.abs(p - centro_complejo) < radio_curva:
+            multiplicidad = polos.count(p)
+            p_simbolico = sp.simplify(p)
+
+            if multiplicidad == 1:
+                factor = (var_compleja - p_simbolico) * H
+                residuo_analitico = sp.limit(factor, var_compleja, p_simbolico)
+            else:
+                m = multiplicidad
+                factor = ((var_compleja - p_simbolico)**m) * H
+                derivada = sp.diff(factor, var_compleja, m - 1)
+                residuo_analitico = sp.limit(derivada, var_compleja, p_simbolico) / sp.factorial(m - 1)
+
+            res_val = complex(sp.N(residuo_analitico))
+            residuos_atrapados.append((p, res_val, multiplicidad))
+
+    if residuos_atrapados:
+        suma_residuos = sum([res[1] for res in residuos_atrapados])
+        integral_cauchy = 2 * np.pi * 1j * suma_residuos
+
+    return residuos_atrapados, integral_cauchy
+
+residuos, integral = calcular_residuos_y_cauchy(polos, radio_contorno, centro_x, centro_y, caso)
+
+inestable = "Caso 3" in caso and any(np.abs(p - complex(centro_x, centro_y)) < radio_contorno and p.real > 0 for p in set(polos))
+
+if inestable:
+    st.error("🚨 **ALERTA CRÍTICA GCP:** SISTEMA INESTABLE / DESBORDAMIENTO DE MEMORIA POR POLO EN SEMIPLANO DERECHO")
+
+# ==========================================
+# DESPLIEGUE DE GRÁFICAS
+# ==========================================
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    st.markdown("#### Mapeo en el Plano Complejo y Contorno de Cauchy (γ)")
+    fig, ax = plt.subplots(figsize=(6, 5.5), facecolor='#FFFFFF')
+    ax.axhline(0, color='gray', linestyle='--', linewidth=0.8)
+    ax.axvline(0, color='gray', linestyle='--', linewidth=0.8)
+
+    theta = np.linspace(0, 2*np.pi, 200)
+    cx_pts = centro_x + radio_contorno * np.cos(theta)
+    cy_pts = centro_y + radio_contorno * np.sin(theta)
+    ax.plot(cx_pts, cy_pts, color='#EA4335', linewidth=2.5, label=f'Contorno γ (R={radio_contorno:.2f})')
+    ax.fill(cx_pts, cy_pts, color='#EA4335', alpha=0.08)
+
+    if tipo_dominio == "Z":
+        ax.plot(np.cos(theta), np.sin(theta), color='#4285F4', linestyle=':', label='Círculo Unitario (|z|=1)')
+
+    for p in set(polos):
+        multiplicidad = polos.count(p)
+        label_p = f'Polo (x{multiplicidad})' if multiplicidad > 1 else 'Polo Simple'
+        ax.scatter(p.real, p.imag, color='#34A853', marker='x', s=180, linewidth=3, zorder=5)
+        
+        ax.text(p.real, p.imag + 0.35, f"{p.real:.2f} + {p.imag:.2f}j\n({label_p})", 
+                fontsize=8, fontweight='bold', color='#202124', ha='center',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'))
+
+    ax.set_xlim([-4.5, 4.5])
+    ax.set_ylim([-4.5, 4.5])
+    ax.set_xlabel(f'Parte Real (Re)', fontsize=10)
+    ax.set_ylabel(f'Parte Imaginaria (Im)', fontsize=10)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc='upper right')
+    ax.set_aspect('equal')
+    st.pyplot(fig)
+
+with col2:
+    st.markdown("#### Respuesta Temporal del Sistema h(t) / h[n]")
+    fig_temp, ax_t = plt.subplots(figsize=(6, 4.2), facecolor='#FFFFFF')
+    ruido = np.random.normal(0, 0.03, 200)
+
+    if "Caso 1" in caso:
+        n = np.arange(0, 21)
+        h_n = 2.4285 * (0.85**n) - 1.4285 * (0.5**n) + ruido[:len(n)]
+        markerline, stemlines, baseline = ax_t.stem(n, h_n)
+        plt.setp(markerline, color='#4285F4', marker='o')
+        plt.setp(stemlines, color='#4285F4')
+        plt.setp(baseline, color='#EA4335')
+        ax_t.set_title("Respuesta Discreta h[n] (Estable - Decae a 0)", color='#34A853')
+        ax_t.set_xlabel("Muestras (n)")
+        ax_t.set_ylabel("h[n]")
+
+    elif "Caso 2" in caso:
+        t = np.linspace(0, 5, 200)
+        h_t = np.exp(-2*t) * (np.cos(3*t) + (4/3)*np.sin(3*t)) + ruido
+        ax_t.plot(t, h_t, color='#FBBC05', linewidth=2)
+        ax_t.set_title("Respuesta Continua h(t) (Oscilación Amortiguada)", color='#34A853')
+        ax_t.set_xlabel("Tiempo (s)")
+        ax_t.set_ylabel("h(t)")
+
+    else:
+        t = np.linspace(0, 3.5, 200)
+        h_t = 0.25 * t * np.exp(t) - 0.0625 * np.exp(t) + 0.0625 * np.exp(-3*t)
+        ax_t.plot(t, h_t, color='#EA4335', linewidth=2.5)
+        ax_t.set_title("Respuesta Inestable h(t) (Crecimiento Exponencial -> ∞)", color='#EA4335')
+        ax_t.set_xlabel("Tiempo (s)")
+        ax_t.set_ylabel("h(t)")
+
+    ax_t.grid(True, alpha=0.3)
+    st.pyplot(fig_temp)
+
+# ==========================================
+# PANEL DE RESULTADOS MATEMÁTICOS ESTRUCTURADOS (LaTeX UI)
+# ==========================================
+st.markdown("---")
+st.subheader("🧮 Panel de Análisis Analítico y Teorema del Residuo de Cauchy")
+
+m_col1, m_col2, m_col3 = st.columns([1.2, 1.5, 1.3])
+
+with m_col1:
+    st.markdown("##### 📄 Función de Transferencia Evaluada")
+    if "Caso 1" in caso:
+        st.latex(r"H(z) = \frac{z^2}{(z - 0.5)(z - 0.85)}")
+    elif "Caso 2" in caso:
+        st.latex(r"H(s) = \frac{s + 2}{s^2 + 4s + 13}")
+    else:
+        st.latex(r"H(s) = \frac{1}{(s - 1)^2(s + 3)}")
+
+with m_col2:
+    st.markdown("##### 📌 Residuos Evaluados en $\gamma$")
+    if residuos:
+        for p_val, r_val, mult in residuos:
+            signo_im = "+" if p_val.imag >= 0 else ""
+            p_str = f"{p_val.real:.2f}{signo_im}{p_val.imag:.2f}j" if p_val.imag != 0 else f"{p_val.real:.2f}"
+            r_real = r_val.real
+            r_imag = r_val.imag
+            
+            if abs(r_imag) < 1e-5:
+                res_tex = f"{r_real:.4f}"
+            else:
+                signo_r = "+" if r_imag >= 0 else ""
+                res_tex = f"{r_real:.4f}{signo_r}{r_imag:.4f}j"
+
+            var_letra = "z" if tipo_dominio == "Z" else "s"
+            st.latex(rf"\text{{Res}}\left(H, {var_letra} = {p_str}\right) = {res_tex}")
+    else:
+        st.write(" *No hay polos contenidos en el contorno actual.*")
+
+with m_col3:
+    st.markdown("##### ∮ Integral de Contorno de Cauchy")
+    var_int = "z" if tipo_dominio == "Z" else "s"
+    
+    val_real = integral.real
+    val_imag = integral.imag
+    
+    if abs(val_real) < 1e-4:
+        integral_tex = f"{val_imag:.4f}j"
+    else:
+        signo_i = "+" if val_imag >= 0 else ""
+        integral_tex = f"{val_real:.4f}{signo_i}{val_imag:.4f}j"
+
+    st.latex(rf"\oint_{{\gamma}} H({var_int})\,d{var_int} = 2\pi j \sum \text{{Res}} = {integral_tex}")
+
+# Registro de auditoría GCP en bloque estilizado
+st.markdown("##### 🖥️ Registro de Auditoría GCP")
+st.code(f"""[LOG AUDITORÍA GCP] - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+[NODE_ID]: {ID_SERVIDOR} | [SEMILLA]: {SEED_EQUIPO}
+[ESTADO]: {'SISTEMA INESTABLE' if inestable else 'SISTEMA OPERATIVO / ESTABLE'}
+[POLOS DENTRO DEL CONTORNO]: {len(residuos)}
+""", language="bash")
